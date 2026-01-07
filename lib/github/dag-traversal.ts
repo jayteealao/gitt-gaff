@@ -43,12 +43,16 @@ export async function fetchCommitGraph(
   options: {
     initialCommitsPerBranch?: number;
     maxCommitsToDisplay?: number;
+    commitsPerFetch?: number;
+    loadAll?: boolean;
     state?: DAGTraversalState;
   } = {}
 ): Promise<CommitGraphData> {
   const {
     initialCommitsPerBranch = 10,
     maxCommitsToDisplay = 35,
+    commitsPerFetch = 50,
+    loadAll = false,
     state = createInitialDAGState(),
   } = options;
 
@@ -115,6 +119,15 @@ export async function fetchCommitGraph(
     }
   }
 
+  if (loadAll) {
+    while (state.frontier.size > 0) {
+      await fetchMoreCommits(client, owner, repo, state, {
+        commitsPerFetch,
+        maxCommitsToDisplay: Number.MAX_SAFE_INTEGER,
+      });
+    }
+  }
+
   // Phase 2: Propagate branch associations
   // A commit belongs to a branch if it's reachable from that branch's head
   propagateBranchAssociations(state, branches);
@@ -125,99 +138,105 @@ export async function fetchCommitGraph(
   );
 
   // Take only the commits we want to display
-  const commitsToDisplay = allCommits.slice(0, maxCommitsToDisplay);
+  const displayLimit = loadAll ? allCommits.length : maxCommitsToDisplay;
+  const commitsToDisplay = allCommits.slice(0, displayLimit);
 
-  // Find and fetch missing parent commits to ensure graph connectivity
-  const displayedOids = new Set(commitsToDisplay.map((c) => c.oid));
-  const queuedCommits = [...commitsToDisplay];
-  const processedOids = new Set<string>();
-  const pendingFetchOids = new Set<string>();
-  const maxExtraCommits = Math.max(initialCommitsPerBranch, Math.min(maxCommitsToDisplay, 50));
-  let extraCommits = 0;
+  if (!loadAll) {
+    // Find and fetch missing parent commits to ensure graph connectivity
+    const displayedOids = new Set(commitsToDisplay.map((c) => c.oid));
+    const queuedCommits = [...commitsToDisplay];
+    const processedOids = new Set<string>();
+    const pendingFetchOids = new Set<string>();
+    const maxExtraCommits = Math.min(
+      250,
+      Math.max(maxCommitsToDisplay * 6, initialCommitsPerBranch * 4, 120)
+    );
+    let extraCommits = 0;
 
-  const enqueueCommit = (commit: Commit) => {
-    if (displayedOids.has(commit.oid)) {
-      return;
-    }
-    commitsToDisplay.push(commit);
-    displayedOids.add(commit.oid);
-    queuedCommits.push(commit);
-    extraCommits += 1;
-  };
-
-  const queueParents = (commit: Commit) => {
-    if (processedOids.has(commit.oid)) {
-      return;
-    }
-    processedOids.add(commit.oid);
-
-    for (const parent of commit.parents) {
-      if (displayedOids.has(parent.oid)) {
-        continue;
+    const enqueueCommit = (commit: Commit) => {
+      if (displayedOids.has(commit.oid)) {
+        return;
       }
+      commitsToDisplay.push(commit);
+      displayedOids.add(commit.oid);
+      queuedCommits.push(commit);
+      extraCommits += 1;
+    };
 
-      const cachedParent = state.commits.get(parent.oid);
-      if (cachedParent) {
-        if (extraCommits >= maxExtraCommits) {
+    const queueParents = (commit: Commit) => {
+      if (processedOids.has(commit.oid)) {
+        return;
+      }
+      processedOids.add(commit.oid);
+
+      for (const parent of commit.parents) {
+        if (displayedOids.has(parent.oid)) {
           continue;
         }
-        enqueueCommit(cachedParent);
-        continue;
-      }
 
-      if (!state.visitedCommits.has(parent.oid)) {
-        pendingFetchOids.add(parent.oid);
-      }
-    }
-  };
-
-  while ((queuedCommits.length > 0 || pendingFetchOids.size > 0) && extraCommits < maxExtraCommits) {
-    while (queuedCommits.length > 0 && extraCommits < maxExtraCommits) {
-      const nextCommit = queuedCommits.shift();
-      if (nextCommit) {
-        queueParents(nextCommit);
-      }
-    }
-
-    if (pendingFetchOids.size === 0 || extraCommits >= maxExtraCommits) {
-      break;
-    }
-
-    const missingOids = Array.from(pendingFetchOids);
-    pendingFetchOids.clear();
-
-    for (const oid of missingOids) {
-      if (extraCommits >= maxExtraCommits || displayedOids.has(oid)) {
-        continue;
-      }
-      try {
-        const { commits } = await client.getCommitHistory(owner, repo, oid, 1);
-        if (commits.length > 0) {
-          const parentCommit = commits[0];
-          state.visitedCommits.add(parentCommit.oid);
-          state.commits.set(parentCommit.oid, parentCommit);
-          for (const parent of parentCommit.parents) {
-            if (!state.visitedCommits.has(parent.oid)) {
-              state.frontier.add(parent.oid);
-            }
+        const cachedParent = state.commits.get(parent.oid);
+        if (cachedParent) {
+          if (extraCommits >= maxExtraCommits) {
+            continue;
           }
-          enqueueCommit(parentCommit);
+          enqueueCommit(cachedParent);
+          continue;
         }
-      } catch (error) {
-        console.error(`Failed to fetch parent commit ${oid}:`, error);
+
+        if (!state.visitedCommits.has(parent.oid)) {
+          pendingFetchOids.add(parent.oid);
+        }
+      }
+    };
+
+    while ((queuedCommits.length > 0 || pendingFetchOids.size > 0) && extraCommits < maxExtraCommits) {
+      while (queuedCommits.length > 0 && extraCommits < maxExtraCommits) {
+        const nextCommit = queuedCommits.shift();
+        if (nextCommit) {
+          queueParents(nextCommit);
+        }
+      }
+
+      if (pendingFetchOids.size === 0 || extraCommits >= maxExtraCommits) {
+        break;
+      }
+
+      const missingOids = Array.from(pendingFetchOids);
+      pendingFetchOids.clear();
+
+      for (const oid of missingOids) {
+        if (extraCommits >= maxExtraCommits || displayedOids.has(oid)) {
+          continue;
+        }
+        try {
+          const { commits } = await client.getCommitHistory(owner, repo, oid, 1);
+          if (commits.length > 0) {
+            const parentCommit = commits[0];
+            state.visitedCommits.add(parentCommit.oid);
+            state.commits.set(parentCommit.oid, parentCommit);
+            for (const parent of parentCommit.parents) {
+              if (!state.visitedCommits.has(parent.oid)) {
+                state.frontier.add(parent.oid);
+              }
+            }
+            enqueueCommit(parentCommit);
+          }
+        } catch (error) {
+          console.error(`Failed to fetch parent commit ${oid}:`, error);
+        }
       }
     }
-  }
 
-  // Re-sort after adding parent commits to maintain date order
-  commitsToDisplay.sort((a, b) => b.committedDate.getTime() - a.committedDate.getTime());
+    // Re-sort after adding parent commits to maintain date order
+    commitsToDisplay.sort((a, b) => b.committedDate.getTime() - a.committedDate.getTime());
+  }
 
   return {
     commits: commitsToDisplay,
     branches,
     heads,
-    hasMore: allCommits.length > maxCommitsToDisplay || state.frontier.size > 0,
-    cursor: state.frontier.size > 0 ? Array.from(state.frontier)[0] : undefined,
+    hasMore: loadAll ? false : allCommits.length > maxCommitsToDisplay || state.frontier.size > 0,
+    cursor: loadAll || state.frontier.size === 0 ? undefined : Array.from(state.frontier)[0],
   };
 }
 

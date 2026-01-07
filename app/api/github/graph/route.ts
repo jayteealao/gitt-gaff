@@ -14,6 +14,8 @@ import { assignLanesAndColors } from "@/lib/graph/topological-lane-assignment";
  *   repo: string
  *   branch?: string (optional, for filtering)
  *   limit?: number (optional, max commits to return)
+ *   loadAll?: boolean (optional, fetch full history)
+ *   commitsPerFetch?: number (optional, batch size when loadAll is true)
  * }
  */
 export async function POST(request: NextRequest) {
@@ -46,6 +48,16 @@ export async function POST(request: NextRequest) {
       console.warn(`Limit out of bounds (${rawLimit}), clamped to ${limit}`);
     }
 
+    const loadAll = body.loadAll === true;
+    const rawCommitsPerFetch = body.commitsPerFetch;
+    const commitsPerFetch = typeof rawCommitsPerFetch === "number"
+      ? Math.min(Math.max(Math.floor(rawCommitsPerFetch), 1), 200)
+      : undefined;
+
+    if (typeof rawCommitsPerFetch === "number" && (rawCommitsPerFetch < 1 || rawCommitsPerFetch > 200)) {
+      console.warn(`commitsPerFetch out of bounds (${rawCommitsPerFetch}), clamped to ${commitsPerFetch}`);
+    }
+
     // Get token from request
     const token = getTokenFromRequest(request);
     const client = new GitHubClient(token);
@@ -75,6 +87,8 @@ export async function POST(request: NextRequest) {
     // Fetch commit graph
     const graphData = await fetchCommitGraph(client, owner, repo, branchesToFetch, {
       maxCommitsToDisplay: limit,
+      commitsPerFetch,
+      loadAll,
     });
 
     // Assign lanes and colors
