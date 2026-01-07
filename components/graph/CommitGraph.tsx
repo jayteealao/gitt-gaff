@@ -2,11 +2,17 @@
 
 import { Commit, DEFAULT_GRAPH_CONFIG } from "@/lib/types";
 import { calculateIndexArray } from "@/lib/graph/lane-assignment";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 
 interface CommitGraphProps {
   commits: Commit[];
   onCommitClick?: (commit: Commit) => void;
+}
+
+interface CommitPosition {
+  oid: string;
+  cx: number;
+  cy: number;
 }
 
 export default function CommitGraph({ commits, onCommitClick }: CommitGraphProps) {
@@ -17,26 +23,54 @@ export default function CommitGraph({ commits, onCommitClick }: CommitGraphProps
   const commitSpacing = 50; // Vertical spacing between commits
 
   // Calculate index array for lane positioning
-  const indexArray = commits.length > 0 ? calculateIndexArray(commits) : [];
+  const indexArray = useMemo(
+    () => (commits.length > 0 ? calculateIndexArray(commits) : []),
+    [commits]
+  );
+
+  // Calculate positions without mutating commits
+  const commitPositions = useMemo(() => {
+    const positions = new Map<string, CommitPosition>();
+    commits.forEach((commit, i) => {
+      const lane = commit.lineIndex || 0;
+      const xIndex = indexArray[i]?.indexOf(lane) ?? lane;
+      positions.set(commit.oid, {
+        oid: commit.oid,
+        cx: 30 + xIndex * config.laneWidth,
+        cy: i * commitSpacing + 25,
+      });
+    });
+    return positions;
+  }, [commits, indexArray, config.laneWidth, commitSpacing]);
 
   // Calculate SVG dimensions
-  const maxLane = commits.length > 0
-    ? Math.max(...commits.map((c) => c.lineIndex || 0))
-    : 0;
-  const width = Math.min(30 + (maxLane + 1) * config.laneWidth, 200);
-  const height = commits.length * commitSpacing;
-
-  // Assign x, y coordinates to commits
-  commits.forEach((commit, i) => {
-    const lane = commit.lineIndex || 0;
-    const xIndex = indexArray[i]?.indexOf(lane) ?? lane;
-    commit.cx = 30 + xIndex * config.laneWidth;
-    commit.cy = i * commitSpacing + 25;
-  });
+  const { width, height } = useMemo(() => {
+    const maxLane = commits.length > 0
+      ? Math.max(...commits.map((c) => c.lineIndex || 0))
+      : 0;
+    return {
+      width: Math.min(30 + (maxLane + 1) * config.laneWidth, 200),
+      height: commits.length * commitSpacing,
+    };
+  }, [commits, config.laneWidth, commitSpacing]);
 
   // Build commit lookup
-  const commitDict = new Map<string, Commit>();
-  commits.forEach((c) => commitDict.set(c.oid, c));
+  const commitDict = useMemo(() => {
+    const dict = new Map<string, Commit>();
+    commits.forEach((c) => dict.set(c.oid, c));
+    return dict;
+  }, [commits]);
+
+  // Build lane to commit mapping for O(1) lookup
+  const laneToCommit = useMemo(() => {
+    const map = new Map<number, Commit>();
+    commits.forEach((c) => {
+      if (c.lineIndex !== undefined && !map.has(c.lineIndex)) {
+        map.set(c.lineIndex, c);
+      }
+    });
+    return map;
+  }, [commits]);
 
   return (
     <svg
@@ -48,18 +82,22 @@ export default function CommitGraph({ commits, onCommitClick }: CommitGraphProps
     >
       {/* Draw connection lines */}
       {commits.map((commit, i) => {
-        const thisx = commit.cx || 0;
-        const thisy = commit.cy || 0;
+        const pos = commitPositions.get(commit.oid);
+        if (!pos) return null;
+
+        const thisx = pos.cx;
+        const thisy = pos.cy;
 
         return (
           <g key={`lines-${commit.oid}`}>
             {/* Lines to parents */}
             {commit.parents.map((parent, j) => {
               const parentCommit = commitDict.get(parent.oid);
-              if (!parentCommit || !parentCommit.cy) return null;
+              const parentPos = commitPositions.get(parent.oid);
+              if (!parentCommit || !parentPos) return null;
 
-              const nextx = parentCommit.cx || 0;
-              const nexty = parentCommit.cy || 0;
+              const nextx = parentPos.cx;
+              const nexty = parentPos.cy;
               const color = parentCommit.color || "#999";
 
               return (
@@ -82,10 +120,11 @@ export default function CommitGraph({ commits, onCommitClick }: CommitGraphProps
                   const xPos = 30 + indexArray[i].indexOf(lane) * config.laneWidth;
                   const nextXPos = 30 + indexArray[i + 1].indexOf(lane) * config.laneWidth;
                   const yPos = thisy;
-                  const nextYPos = commits[i + 1].cy || 0;
+                  const nextCommitPos = commitPositions.get(commits[i + 1].oid);
+                  const nextYPos = nextCommitPos?.cy || 0;
 
-                  // Find color for this lane
-                  const laneCommit = commits.find((c) => c.lineIndex === lane);
+                  // Find color for this lane (O(1) lookup)
+                  const laneCommit = laneToCommit.get(lane);
                   const color = laneCommit?.color || "#999";
 
                   // Only draw if this isn't the current commit's lane
@@ -110,47 +149,52 @@ export default function CommitGraph({ commits, onCommitClick }: CommitGraphProps
       })}
 
       {/* Draw commit dots */}
-      {commits.map((commit) => (
-        <g key={`commit-${commit.oid}`}>
-          {/* Head commit indicator (outline circle) */}
-          {commit.isHead && (
+      {commits.map((commit) => {
+        const pos = commitPositions.get(commit.oid);
+        if (!pos) return null;
+
+        return (
+          <g key={`commit-${commit.oid}`}>
+            {/* Head commit indicator (outline circle) */}
+            {commit.isHead && (
+              <circle
+                cx={pos.cx}
+                cy={pos.cy}
+                r="7"
+                stroke={commit.color}
+                strokeWidth="2"
+                fill="none"
+              />
+            )}
+
+            {/* Commit dot */}
             <circle
-              cx={commit.cx}
-              cy={commit.cy}
-              r="7"
-              stroke={commit.color}
-              strokeWidth="2"
-              fill="none"
+              cx={pos.cx}
+              cy={pos.cy}
+              r={config.commitRadius}
+              fill={commit.color}
+              className={`cursor-pointer transition-all ${
+                hoveredCommit === commit.oid ? "r-6" : ""
+              }`}
+              onMouseEnter={() => setHoveredCommit(commit.oid)}
+              onMouseLeave={() => setHoveredCommit(null)}
+              onClick={() => onCommitClick?.(commit)}
             />
-          )}
 
-          {/* Commit dot */}
-          <circle
-            cx={commit.cx}
-            cy={commit.cy}
-            r={config.commitRadius}
-            fill={commit.color}
-            className={`cursor-pointer transition-all ${
-              hoveredCommit === commit.oid ? "r-6" : ""
-            }`}
-            onMouseEnter={() => setHoveredCommit(commit.oid)}
-            onMouseLeave={() => setHoveredCommit(null)}
-            onClick={() => onCommitClick?.(commit)}
-          />
-
-          {/* Invisible larger circle for easier hovering */}
-          <circle
-            cx={commit.cx}
-            cy={commit.cy}
-            r="12"
-            fill="transparent"
-            className="cursor-pointer"
-            onMouseEnter={() => setHoveredCommit(commit.oid)}
-            onMouseLeave={() => setHoveredCommit(null)}
-            onClick={() => onCommitClick?.(commit)}
-          />
-        </g>
-      ))}
+            {/* Invisible larger circle for easier hovering */}
+            <circle
+              cx={pos.cx}
+              cy={pos.cy}
+              r="12"
+              fill="transparent"
+              className="cursor-pointer"
+              onMouseEnter={() => setHoveredCommit(commit.oid)}
+              onMouseLeave={() => setHoveredCommit(null)}
+              onClick={() => onCommitClick?.(commit)}
+            />
+          </g>
+        );
+      })}
     </svg>
   );
 }

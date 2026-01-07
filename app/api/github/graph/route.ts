@@ -19,13 +19,31 @@ import { assignLanesAndColors } from "@/lib/graph/lane-assignment";
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { owner, repo, branch, limit = 35 } = body;
+    const { owner, repo, branch } = body;
 
-    if (!owner || !repo) {
+    // Validate required parameters
+    if (!owner || typeof owner !== "string" || owner.trim().length === 0) {
       return NextResponse.json(
-        { error: "Missing owner or repo parameter" },
+        { error: "Missing or invalid owner parameter" },
         { status: 400 }
       );
+    }
+
+    if (!repo || typeof repo !== "string" || repo.trim().length === 0) {
+      return NextResponse.json(
+        { error: "Missing or invalid repo parameter" },
+        { status: 400 }
+      );
+    }
+
+    // Validate and sanitize limit parameter to prevent DoS
+    const rawLimit = body.limit ?? 35;
+    const limit = typeof rawLimit === "number"
+      ? Math.min(Math.max(Math.floor(rawLimit), 1), 100)
+      : 35;
+
+    if (typeof rawLimit === "number" && (rawLimit < 1 || rawLimit > 100)) {
+      console.warn(`Limit out of bounds (${rawLimit}), clamped to ${limit}`);
     }
 
     // Get token from request
@@ -74,8 +92,27 @@ export async function POST(request: NextRequest) {
   } catch (error: any) {
     console.error("Failed to fetch commit graph:", error);
 
+    // Return sanitized error message (don't expose internal details)
+    const isNotFound = error.message?.includes("not found") || error.message?.includes("404");
+    const isUnauthorized = error.message?.includes("401") || error.message?.includes("unauthorized");
+
+    if (isNotFound) {
+      return NextResponse.json(
+        { error: "Repository not found or not accessible" },
+        { status: 404 }
+      );
+    }
+
+    if (isUnauthorized) {
+      return NextResponse.json(
+        { error: "Authentication required to access this repository" },
+        { status: 401 }
+      );
+    }
+
+    // Generic error for all other cases
     return NextResponse.json(
-      { error: error.message || "Failed to fetch commit graph" },
+      { error: "Unable to load repository. Please check the URL and try again." },
       { status: 500 }
     );
   }

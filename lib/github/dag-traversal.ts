@@ -52,62 +52,66 @@ export async function fetchCommitGraph(
     state = createInitialDAGState(),
   } = options;
 
-  // Phase 1: Fetch initial commits from each branch head
+  // Phase 1: Fetch initial commits from each branch head (in parallel)
   const heads = branches.map((b) => ({ name: b.name, oid: b.target.oid }));
 
-  for (const branch of branches) {
-    // Skip if we've already visited this branch's head
-    if (state.visitedCommits.has(branch.target.oid)) {
-      continue;
-    }
-
-    try {
-      const { commits } = await client.getCommitHistory(
-        owner,
-        repo,
-        branch.target.oid,
-        initialCommitsPerBranch
-      );
-
-      // Process each commit
-      for (const commit of commits) {
-        if (!state.visitedCommits.has(commit.oid)) {
-          state.visitedCommits.add(commit.oid);
-          state.commits.set(commit.oid, commit);
-
-          // Track which branch this commit belongs to
-          if (!state.branchCommits.has(branch.name)) {
-            state.branchCommits.set(branch.name, new Set());
-          }
-          state.branchCommits.get(branch.name)!.add(commit.oid);
-
-          // Add branch name to commit
-          if (!commit.branches.includes(branch.name)) {
-            commit.branches.push(branch.name);
-          }
-
-          // Add parents to frontier
-          for (const parent of commit.parents) {
-            if (!state.visitedCommits.has(parent.oid)) {
-              state.frontier.add(parent.oid);
-            }
-          }
-        } else {
-          // Commit already exists, just add branch association
-          const existingCommit = state.commits.get(commit.oid);
-          if (existingCommit && !existingCommit.branches.includes(branch.name)) {
-            existingCommit.branches.push(branch.name);
-          }
-
-          if (!state.branchCommits.has(branch.name)) {
-            state.branchCommits.set(branch.name, new Set());
-          }
-          state.branchCommits.get(branch.name)!.add(commit.oid);
-        }
+  // Fetch all branches in parallel for better performance
+  const branchFetchPromises = branches
+    .filter((branch) => !state.visitedCommits.has(branch.target.oid))
+    .map(async (branch) => {
+      try {
+        const { commits } = await client.getCommitHistory(
+          owner,
+          repo,
+          branch.target.oid,
+          initialCommitsPerBranch
+        );
+        return { branch, commits, error: null };
+      } catch (error) {
+        console.error(`Failed to fetch commits for branch ${branch.name}:`, error);
+        return { branch, commits: [], error };
       }
-    } catch (error) {
-      console.error(`Failed to fetch commits for branch ${branch.name}:`, error);
-      // Continue with other branches even if one fails
+    });
+
+  const branchResults = await Promise.all(branchFetchPromises);
+
+  // Process results from all branches
+  for (const { branch, commits } of branchResults) {
+    // Process each commit
+    for (const commit of commits) {
+      if (!state.visitedCommits.has(commit.oid)) {
+        state.visitedCommits.add(commit.oid);
+        state.commits.set(commit.oid, commit);
+
+        // Track which branch this commit belongs to
+        if (!state.branchCommits.has(branch.name)) {
+          state.branchCommits.set(branch.name, new Set());
+        }
+        state.branchCommits.get(branch.name)!.add(commit.oid);
+
+        // Add branch name to commit
+        if (!commit.branches.includes(branch.name)) {
+          commit.branches.push(branch.name);
+        }
+
+        // Add parents to frontier
+        for (const parent of commit.parents) {
+          if (!state.visitedCommits.has(parent.oid)) {
+            state.frontier.add(parent.oid);
+          }
+        }
+      } else {
+        // Commit already exists, just add branch association
+        const existingCommit = state.commits.get(commit.oid);
+        if (existingCommit && !existingCommit.branches.includes(branch.name)) {
+          existingCommit.branches.push(branch.name);
+        }
+
+        if (!state.branchCommits.has(branch.name)) {
+          state.branchCommits.set(branch.name, new Set());
+        }
+        state.branchCommits.get(branch.name)!.add(commit.oid);
+      }
     }
   }
 
@@ -209,11 +213,15 @@ function propagateBranchAssociations(
   state: DAGTraversalState,
   branches: Branch[]
 ): void {
+  const MAX_DEPTH = 10000; // Safety limit to prevent infinite loops
+
   for (const branch of branches) {
     const visited = new Set<string>();
     const queue: string[] = [branch.target.oid];
+    let depth = 0;
 
-    while (queue.length > 0) {
+    while (queue.length > 0 && depth < MAX_DEPTH) {
+      depth++;
       const oid = queue.shift()!;
 
       if (visited.has(oid)) {
