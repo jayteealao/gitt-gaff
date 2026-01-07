@@ -11,6 +11,7 @@ import CommitList from "@/components/graph/CommitList";
 export default function RepoGraphPage() {
   const params = useParams();
   const [commits, setCommits] = useState<Commit[]>([]);
+  const [heads, setHeads] = useState<Array<{ name: string; oid: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedCommit, setExpandedCommit] = useState<string | null>(null);
@@ -56,6 +57,7 @@ export default function RepoGraphPage() {
 
         const data = await response.json();
         setCommits(data.commits);
+        setHeads(Array.isArray(data.heads) ? data.heads : []);
       } catch (err: any) {
         console.error("Error loading commit graph:", err);
         setError(err.message || "Failed to load commit graph");
@@ -121,6 +123,7 @@ export default function RepoGraphPage() {
           <CommitGraph
             commits={commits}
             expandedCommit={expandedCommit}
+            heads={heads}
           />
           <CommitList
             commits={commits}
