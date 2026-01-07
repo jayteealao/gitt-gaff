@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GitHubClient } from "@/lib/github/client";
 import { fetchCommitGraph } from "@/lib/github/dag-traversal";
-import { assignLanesAndColors } from "@/lib/graph/lane-assignment";
+import { assignLanesAndColors } from "@/lib/graph/topological-lane-assignment";
 
 /**
  * POST /api/github/graph
