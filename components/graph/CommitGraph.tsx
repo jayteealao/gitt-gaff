@@ -1,12 +1,15 @@
 "use client";
 
 import { Commit, DEFAULT_GRAPH_CONFIG } from "@/lib/types";
-import { calculateIndexArray } from "@/lib/graph/lane-assignment";
+import { calculateIndexArray } from "@/lib/graph/topological-lane-assignment";
 import { useEffect, useRef, useState, useMemo } from "react";
+
+const COLLAPSED_HEIGHT = 50; // px - must match CommitList
+const EXPANDED_HEIGHT = 200; // px - must match CommitList
 
 interface CommitGraphProps {
   commits: Commit[];
-  onCommitClick?: (commit: Commit) => void;
+  expandedCommit: string | null;
 }
 
 interface CommitPosition {
@@ -15,12 +18,11 @@ interface CommitPosition {
   cy: number;
 }
 
-export default function CommitGraph({ commits, onCommitClick }: CommitGraphProps) {
+export default function CommitGraph({ commits, expandedCommit }: CommitGraphProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [hoveredCommit, setHoveredCommit] = useState<string | null>(null);
 
   const config = DEFAULT_GRAPH_CONFIG;
-  const commitSpacing = 50; // Vertical spacing between commits
 
   // Calculate index array for lane positioning
   const indexArray = useMemo(
@@ -28,31 +30,43 @@ export default function CommitGraph({ commits, onCommitClick }: CommitGraphProps
     [commits]
   );
 
-  // Calculate positions without mutating commits
+  // Calculate positions with cumulative Y based on expanded state
   const commitPositions = useMemo(() => {
     const positions = new Map<string, CommitPosition>();
+    let cumulativeY = 0;
+
     commits.forEach((commit, i) => {
       const lane = commit.lineIndex || 0;
       const xIndex = indexArray[i]?.indexOf(lane) ?? lane;
+      const rowHeight = expandedCommit === commit.oid ? EXPANDED_HEIGHT : COLLAPSED_HEIGHT;
+
       positions.set(commit.oid, {
         oid: commit.oid,
         cx: 30 + xIndex * config.laneWidth,
-        cy: i * commitSpacing + 25,
+        cy: cumulativeY + rowHeight / 2, // Center dot vertically in row
       });
+
+      cumulativeY += rowHeight;
     });
     return positions;
-  }, [commits, indexArray, config.laneWidth, commitSpacing]);
+  }, [commits, indexArray, config.laneWidth, expandedCommit]);
 
   // Calculate SVG dimensions
   const { width, height } = useMemo(() => {
     const maxLane = commits.length > 0
       ? Math.max(...commits.map((c) => c.lineIndex || 0))
       : 0;
+
+    // Calculate total height based on expanded state
+    const totalHeight = commits.reduce((sum, commit) => {
+      return sum + (expandedCommit === commit.oid ? EXPANDED_HEIGHT : COLLAPSED_HEIGHT);
+    }, 0);
+
     return {
       width: Math.min(30 + (maxLane + 1) * config.laneWidth, 200),
-      height: commits.length * commitSpacing,
+      height: totalHeight,
     };
-  }, [commits, config.laneWidth, commitSpacing]);
+  }, [commits, config.laneWidth, expandedCommit]);
 
   // Build commit lookup
   const commitDict = useMemo(() => {
@@ -173,13 +187,19 @@ export default function CommitGraph({ commits, onCommitClick }: CommitGraphProps
               cy={pos.cy}
               r={config.commitRadius}
               fill={commit.color}
-              className={`cursor-pointer transition-all ${
+              className={`transition-all ${
                 hoveredCommit === commit.oid ? "r-6" : ""
               }`}
               onMouseEnter={() => setHoveredCommit(commit.oid)}
               onMouseLeave={() => setHoveredCommit(null)}
-              onClick={() => onCommitClick?.(commit)}
-            />
+            >
+              <title>
+                {commit.messageHeadline}
+                {'\n'}SHA: {commit.oid.substring(0, 7)}
+                {'\n'}Author: {commit.author.name}
+                {commit.branches.length > 0 && `\nBranches: ${commit.branches.join(', ')}`}
+              </title>
+            </circle>
 
             {/* Invisible larger circle for easier hovering */}
             <circle
@@ -187,12 +207,43 @@ export default function CommitGraph({ commits, onCommitClick }: CommitGraphProps
               cy={pos.cy}
               r="12"
               fill="transparent"
-              className="cursor-pointer"
               onMouseEnter={() => setHoveredCommit(commit.oid)}
               onMouseLeave={() => setHoveredCommit(null)}
-              onClick={() => onCommitClick?.(commit)}
-            />
+            >
+              <title>
+                {commit.messageHeadline}
+                {'\n'}SHA: {commit.oid.substring(0, 7)}
+                {'\n'}Author: {commit.author.name}
+                {commit.branches.length > 0 && `\nBranches: ${commit.branches.join(', ')}`}
+              </title>
+            </circle>
           </g>
+        );
+      })}
+
+      {/* Branch name labels for head commits */}
+      {commits.map((commit) => {
+        if (!commit.isHead || commit.branches.length === 0) return null;
+
+        const pos = commitPositions.get(commit.oid);
+        if (!pos) return null;
+
+        const labelText = commit.branches.slice(0, 2).join(", ");
+        const extraCount = commit.branches.length > 2 ? ` +${commit.branches.length - 2}` : "";
+
+        return (
+          <text
+            key={`branch-label-${commit.oid}`}
+            x={pos.cx + 15}
+            y={pos.cy + 4}
+            fontSize="10"
+            fontWeight="500"
+            fill="currentColor"
+            className="text-blue-700 dark:text-blue-300 select-none"
+          >
+            <title>Branch: {commit.branches.join(', ')}</title>
+            {labelText}{extraCount}
+          </text>
         );
       })}
     </svg>
