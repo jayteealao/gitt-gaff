@@ -127,6 +127,38 @@ export async function fetchCommitGraph(
   // Take only the commits we want to display
   const commitsToDisplay = allCommits.slice(0, maxCommitsToDisplay);
 
+  // Find and fetch missing parent commits to ensure graph connectivity
+  const displayedOids = new Set(commitsToDisplay.map(c => c.oid));
+  const missingParentOids: string[] = [];
+
+  for (const commit of commitsToDisplay) {
+    for (const parent of commit.parents) {
+      if (!displayedOids.has(parent.oid) && !state.visitedCommits.has(parent.oid)) {
+        missingParentOids.push(parent.oid);
+      }
+    }
+  }
+
+  // Fetch missing parents (deduplicated) to draw connection lines
+  const uniqueMissingOids = [...new Set(missingParentOids)];
+  for (const oid of uniqueMissingOids) {
+    try {
+      const { commits } = await client.getCommitHistory(owner, repo, oid, 1);
+      if (commits.length > 0) {
+        const parentCommit = commits[0];
+        state.visitedCommits.add(parentCommit.oid);
+        state.commits.set(parentCommit.oid, parentCommit);
+        commitsToDisplay.push(parentCommit);
+        displayedOids.add(parentCommit.oid);
+      }
+    } catch (error) {
+      console.error(`Failed to fetch parent commit ${oid}:`, error);
+    }
+  }
+
+  // Re-sort after adding parent commits to maintain date order
+  commitsToDisplay.sort((a, b) => b.committedDate.getTime() - a.committedDate.getTime());
+
   return {
     commits: commitsToDisplay,
     branches,
