@@ -134,9 +134,8 @@ function findAvailableLane(laneState: LaneState): number {
  */
 function findIncomingLane(commit: Commit, laneState: LaneState): number | undefined {
   // Look through active lanes to see if any is pointing to this commit as parent
-  for (const [lane, oid] of laneState.activeLanes.entries()) {
-    const assignedLane = laneState.commitLanes.get(commit.oid);
-    if (assignedLane === lane) {
+  for (const [lane, parentOid] of laneState.activeLanes.entries()) {
+    if (parentOid === commit.oid) {
       return lane;
     }
   }
