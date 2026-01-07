@@ -82,7 +82,7 @@ export function parsePathSegments(segments: string[]): GitHubRepoInfo | null {
   let path = segments.join("/");
 
   // Fix protocol double-slash (https:/ -> https://)
-  path = path.replace(/^(https?):\/([^\/])/, "$1://$2");
+  path = path.replace(/^(https?):\/(?!\/)/, "$1://");
 
   // Try to parse as a GitHub URL
   return parseGitHubUrl(path);
