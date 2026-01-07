@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { parseGitHubUrl } from "@/lib/utils/url-parser";
 
 export default function Home() {
   const [url, setUrl] = useState("");
@@ -11,24 +12,33 @@ export default function Home() {
     e.preventDefault();
     if (!url.trim()) return;
 
-    // Normalize the URL - accept various GitHub URL formats
+    // Parse the URL to extract owner/repo
     let normalizedUrl = url.trim();
 
-    // If it already starts with https://github.com, prepend it
-    if (normalizedUrl.startsWith("https://github.com/")) {
-      router.push(`/${normalizedUrl}`);
+    // Add protocol if missing
+    if (!normalizedUrl.startsWith("http") && !normalizedUrl.includes("/")) {
+      normalizedUrl = `https://github.com/${normalizedUrl}`;
+    } else if (normalizedUrl.startsWith("github.com/")) {
+      normalizedUrl = `https://${normalizedUrl}`;
     }
-    // If it starts with github.com (without https://), add the protocol
-    else if (normalizedUrl.startsWith("github.com/")) {
-      router.push(`/https://${normalizedUrl}`);
-    }
-    // If it's just owner/repo format
-    else if (normalizedUrl.match(/^[\w-]+\/[\w-]+/)) {
-      router.push(`/${normalizedUrl}`);
-    }
-    else {
+
+    // Parse the GitHub URL
+    const repoInfo = parseGitHubUrl(normalizedUrl);
+
+    if (!repoInfo || !repoInfo.owner || !repoInfo.repo) {
       alert("Please enter a valid GitHub repository URL");
+      return;
     }
+
+    // Navigate using the short format: /owner/repo
+    let path = `/${repoInfo.owner}/${repoInfo.repo}`;
+    if (repoInfo.branch) {
+      path += `/tree/${repoInfo.branch}`;
+    } else if (repoInfo.commit) {
+      path += `/commit/${repoInfo.commit}`;
+    }
+
+    router.push(path);
   };
 
   return (
