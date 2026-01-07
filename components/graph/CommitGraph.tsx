@@ -6,6 +6,7 @@ import { useRef, useState, useMemo } from "react";
 
 const COLLAPSED_HEIGHT = 50; // px - must match CommitList
 const EXPANDED_HEIGHT = 200; // px - must match CommitList
+const GRAPH_LINE_WIDTH = 2.5;
 const BRANCH_LABEL = {
   fontSize: 10,
   height: 18,
@@ -34,6 +35,8 @@ interface CommitGraphProps {
   commits: Commit[];
   expandedCommit: string | null;
   heads: Array<{ name: string; oid: string }>;
+  repoOwner: string;
+  repoName: string;
 }
 
 interface CommitPosition {
@@ -55,7 +58,13 @@ interface BranchLabel {
   startY: number;
 }
 
-export default function CommitGraph({ commits, expandedCommit, heads }: CommitGraphProps) {
+export default function CommitGraph({
+  commits,
+  expandedCommit,
+  heads,
+  repoOwner,
+  repoName,
+}: CommitGraphProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [hoveredCommit, setHoveredCommit] = useState<string | null>(null);
 
@@ -142,7 +151,7 @@ export default function CommitGraph({ commits, expandedCommit, heads }: CommitGr
     }, 0);
 
     return {
-      graphWidth: Math.min(30 + (maxLane + 1) * config.laneWidth, 200),
+      graphWidth: 30 + (maxLane + 1) * config.laneWidth,
       totalHeight: computedTotalHeight,
     };
   }, [commits, config.laneWidth, expandedCommit]);
@@ -164,6 +173,27 @@ export default function CommitGraph({ commits, expandedCommit, heads }: CommitGr
     });
     return map;
   }, [commits]);
+
+  const laneToHeadBranches = useMemo(() => {
+    const map = new Map<number, string[]>();
+    commits.forEach((commit) => {
+      if (commit.lineIndex === undefined) return;
+      const headBranches = headBranchesByOid.get(commit.oid);
+      if (!headBranches || headBranches.length === 0) return;
+
+      const existing = map.get(commit.lineIndex);
+      if (existing) {
+        headBranches.forEach((branch) => {
+          if (!existing.includes(branch)) {
+            existing.push(branch);
+          }
+        });
+      } else {
+        map.set(commit.lineIndex, [...headBranches]);
+      }
+    });
+    return map;
+  }, [commits, headBranchesByOid]);
 
   const branchLabels = useMemo(() => {
     const labels: BranchLabel[] = [];
@@ -220,7 +250,11 @@ export default function CommitGraph({ commits, expandedCommit, heads }: CommitGr
     };
   }, [commits, commitPositions, config.commitRadius, headBranchesByOid, labelColumnWidth]);
 
+  const graphOffsetX = labelColumnWidth;
   const svgWidth = graphWidth + branchLabels.columnWidth;
+  const commitUrlBase = repoOwner && repoName
+    ? `https://github.com/${repoOwner}/${repoName}/commit/`
+    : "";
 
   return (
     <svg
@@ -241,7 +275,7 @@ export default function CommitGraph({ commits, expandedCommit, heads }: CommitGr
         return (
           <g key={`lines-${commit.oid}`}>
             {/* Lines to parents */}
-            {commit.parents.map((parent, j) => {
+            {commit.parents.map((parent) => {
               const parentCommit = commitDict.get(parent.oid);
               const parentPos = commitPositions.get(parent.oid);
               if (!parentCommit || !parentPos) return null;
@@ -249,15 +283,23 @@ export default function CommitGraph({ commits, expandedCommit, heads }: CommitGr
               const nextx = parentPos.cx;
               const nexty = parentPos.cy;
               const color = commit.color || parentCommit.color || "#999";
+              const lineBranches = laneToHeadBranches.get(commit.lineIndex ?? -1)
+                ?? commit.branches;
+              const lineTitle = lineBranches.length > 0
+                ? `Branches: ${formatBranches(lineBranches)}`
+                : "Branches: unknown";
 
               return (
                 <path
                   key={`${commit.oid}-${parent.oid}`}
                   d={drawCurve(thisx, thisy, nextx, nexty)}
                   stroke={color}
-                  strokeWidth="2"
+                  strokeWidth={GRAPH_LINE_WIDTH}
                   fill="none"
-                />
+                  strokeLinecap="round"
+                >
+                  <title>{lineTitle}</title>
+                </path>
               );
             })}
 
@@ -267,8 +309,8 @@ export default function CommitGraph({ commits, expandedCommit, heads }: CommitGr
                 {indexArray[i].map((lane) => {
                   if (!indexArray[i + 1].includes(lane)) return null;
 
-                  const xPos = 30 + indexArray[i].indexOf(lane) * config.laneWidth;
-                  const nextXPos = 30 + indexArray[i + 1].indexOf(lane) * config.laneWidth;
+                  const xPos = graphOffsetX + 30 + indexArray[i].indexOf(lane) * config.laneWidth;
+                  const nextXPos = graphOffsetX + 30 + indexArray[i + 1].indexOf(lane) * config.laneWidth;
                   const yPos = thisy;
                   const nextCommitPos = commitPositions.get(commits[i + 1].oid);
                   const nextYPos = nextCommitPos?.cy || 0;
@@ -276,6 +318,12 @@ export default function CommitGraph({ commits, expandedCommit, heads }: CommitGr
                   // Find color for this lane (O(1) lookup)
                   const laneCommit = laneToCommit.get(lane);
                   const color = laneCommit?.color || "#999";
+                  const lineBranches = laneToHeadBranches.get(lane)
+                    ?? laneCommit?.branches
+                    ?? [];
+                  const lineTitle = lineBranches.length > 0
+                    ? `Branches: ${formatBranches(lineBranches)}`
+                    : `Lane ${lane + 1}`;
 
                   // Only draw if this isn't the current commit's lane
                   if (commit.lineIndex !== lane) {
@@ -284,10 +332,13 @@ export default function CommitGraph({ commits, expandedCommit, heads }: CommitGr
                         key={`lane-${i}-${lane}`}
                         d={drawCurve(xPos, yPos, nextXPos, nextYPos)}
                         stroke={color}
-                        strokeWidth="2"
+                        strokeWidth={GRAPH_LINE_WIDTH}
                         fill="none"
                         opacity="0.6"
-                      />
+                        strokeLinecap="round"
+                      >
+                        <title>{lineTitle}</title>
+                      </path>
                     );
                   }
                   return null;
@@ -346,9 +397,9 @@ export default function CommitGraph({ commits, expandedCommit, heads }: CommitGr
       {commits.map((commit) => {
         const pos = commitPositions.get(commit.oid);
         if (!pos) return null;
-
-        return (
-          <g key={`commit-${commit.oid}`}>
+        const commitUrl = commitUrlBase ? `${commitUrlBase}${commit.oid}` : "";
+        const nodeContent = (
+          <>
             {/* Head commit indicator (outline circle) */}
             {commit.isHead && (
               <circle
@@ -356,7 +407,7 @@ export default function CommitGraph({ commits, expandedCommit, heads }: CommitGr
                 cy={pos.cy}
                 r="7"
                 stroke={commit.color}
-                strokeWidth="2"
+                strokeWidth={GRAPH_LINE_WIDTH}
                 fill="none"
               />
             )}
@@ -375,9 +426,9 @@ export default function CommitGraph({ commits, expandedCommit, heads }: CommitGr
             >
               <title>
                 {commit.messageHeadline}
-                {'\n'}SHA: {commit.oid.substring(0, 7)}
-                {'\n'}Author: {commit.author.name}
-                {commit.branches.length > 0 && `\nBranches: ${commit.branches.join(', ')}`}
+                {"\n"}SHA: {commit.oid.substring(0, 7)}
+                {"\n"}Author: {commit.author.name}
+                {commit.branches.length > 0 && `\nBranches: ${commit.branches.join(", ")}`}
               </title>
             </circle>
 
@@ -392,11 +443,28 @@ export default function CommitGraph({ commits, expandedCommit, heads }: CommitGr
             >
               <title>
                 {commit.messageHeadline}
-                {'\n'}SHA: {commit.oid.substring(0, 7)}
-                {'\n'}Author: {commit.author.name}
-                {commit.branches.length > 0 && `\nBranches: ${commit.branches.join(', ')}`}
+                {"\n"}SHA: {commit.oid.substring(0, 7)}
+                {"\n"}Author: {commit.author.name}
+                {commit.branches.length > 0 && `\nBranches: ${commit.branches.join(", ")}`}
               </title>
             </circle>
+          </>
+        );
+
+        return (
+          <g key={`commit-${commit.oid}`}>
+            {commitUrl ? (
+              <a
+                href={commitUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="cursor-pointer"
+              >
+                {nodeContent}
+              </a>
+            ) : (
+              nodeContent
+            )}
           </g>
         );
       })}
@@ -452,6 +520,16 @@ function buildLabelTexts(branches: string[]): string[] {
   return hasOverflow
     ? [...branches.slice(0, visibleLimit), `+${overflowCount} more`]
     : branches;
+}
+
+function formatBranches(branches: string[]): string {
+  const uniqueBranches = Array.from(new Set(branches));
+  const maxVisible = 3;
+  if (uniqueBranches.length <= maxVisible) {
+    return uniqueBranches.join(", ");
+  }
+  const extraCount = uniqueBranches.length - maxVisible;
+  return `${uniqueBranches.slice(0, maxVisible).join(", ")} +${extraCount} more`;
 }
 
 function estimateTextWidth(text: string, fontSize: number): number {

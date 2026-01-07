@@ -64,7 +64,7 @@ export interface GraphRenderConfig {
 
 export const DEFAULT_GRAPH_CONFIG: GraphRenderConfig = {
   commitRadius: 4,
-  laneWidth: 14,
+  laneWidth: 20,
   commitSpacing: 50,
   colors: [
     "#fd7f6f",

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { parsePathSegments, isValidRepoInfo } from "@/lib/utils/url-parser";
 import { Commit } from "@/lib/types";
 import CommitGraph from "@/components/graph/CommitGraph";
@@ -10,6 +10,14 @@ import CommitList from "@/components/graph/CommitList";
 
 export default function RepoGraphPage() {
   const params = useParams();
+  const repoInfo = useMemo(() => {
+    const pathSegments = Array.isArray(params.path)
+      ? params.path
+      : params.path
+        ? [params.path]
+        : [];
+    return parsePathSegments(pathSegments);
+  }, [params.path]);
   const [commits, setCommits] = useState<Commit[]>([]);
   const [heads, setHeads] = useState<Array<{ name: string; oid: string }>>([]);
   const [loading, setLoading] = useState(true);
@@ -18,14 +26,6 @@ export default function RepoGraphPage() {
 
   useEffect(() => {
     const loadGraph = async () => {
-      // Parse the URL path
-      const pathSegments = Array.isArray(params.path)
-        ? params.path
-        : params.path
-          ? [params.path]
-          : [];
-      const repoInfo = parsePathSegments(pathSegments);
-
       if (!isValidRepoInfo(repoInfo)) {
         setError("Invalid repository URL");
         setLoading(false);
@@ -46,7 +46,8 @@ export default function RepoGraphPage() {
             owner: repoInfo.owner,
             repo: repoInfo.repo,
             branch: repoInfo.branch,
-            limit: 35,
+            loadAll: true,
+            commitsPerFetch: 60,
           }),
         });
 
@@ -67,7 +68,7 @@ export default function RepoGraphPage() {
     };
 
     loadGraph();
-  }, [params.path]);
+  }, [repoInfo]);
 
   if (loading) {
     return (
@@ -124,6 +125,8 @@ export default function RepoGraphPage() {
             commits={commits}
             expandedCommit={expandedCommit}
             heads={heads}
+            repoOwner={repoInfo.owner}
+            repoName={repoInfo.repo}
           />
           <CommitList
             commits={commits}
