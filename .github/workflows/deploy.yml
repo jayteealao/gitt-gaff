@@ -1,0 +1,17 @@
+name: Deploy to Portainer
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  trigger-portainer:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Portainer Webhook
+        run: |
+          curl -X POST --fail --silent --show-error "${{ secrets.PORTAINER_WEBHOOK_URL }}"
+
+      - name: Log deployment
+        run: echo "Triggered Portainer deployment for ${{ github.ref_name }}"

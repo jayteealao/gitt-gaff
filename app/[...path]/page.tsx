@@ -99,6 +99,10 @@ export default function RepoGraphPage() {
     );
   }
 
+  if (!repoInfo) {
+    return null;
+  }
+
   return (
     <div className="min-h-screen flex flex-col">
       <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 p-4">

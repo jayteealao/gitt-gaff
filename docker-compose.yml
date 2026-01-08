@@ -1,0 +1,40 @@
+services:
+  gitt-gaff:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_APP_URL: https://gitt-gaff.archivist.lol
+    container_name: gitt-gaff
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - GITHUB_SERVER_PAT=${GITHUB_SERVER_PAT}
+      - SESSION_SECRET=${SESSION_SECRET}
+      - NEXT_PUBLIC_APP_URL=https://gitt-gaff.archivist.lol
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.gitt-gaff.rule=Host(`gitt-gaff.archivist.lol`)"
+      - "traefik.http.routers.gitt-gaff.entrypoints=web,websecure"
+      - "traefik.http.routers.gitt-gaff.tls=true"
+      - "traefik.http.routers.gitt-gaff.tls.certresolver=myresolver"
+      - "traefik.http.services.gitt-gaff.loadbalancer.server.port=3000"
+      - "traefik.http.routers.gitt-gaff.middlewares=crowdsec-gitt-gaff@docker"
+      - "traefik.http.middlewares.crowdsec-gitt-gaff.plugin.crowdsec-bouncer.enabled=true"
+      - "traefik.http.middlewares.crowdsec-gitt-gaff.plugin.crowdsec-bouncer.crowdseclapikey=${CROWDSEC_API_KEY}"
+    networks:
+      - archivebox_default
+
+networks:
+  archivebox_default:
+    external: true

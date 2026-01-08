@@ -1,0 +1,14 @@
+node_modules
+.next
+out
+.git
+*.md
+.env*
+!.env.example
+coverage
+test-results
+playwright-report
+.claude
+__tests__
+.DS_Store
+*.log
