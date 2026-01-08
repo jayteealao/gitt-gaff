@@ -24,7 +24,6 @@ services:
       start_period: 10s
     labels:
       - "traefik.enable=true"
-      - "traefik.docker.network=archivebox_default"
       - "traefik.http.routers.gitt-gaff.rule=Host(`gitt-gaff.archivist.lol`)"
       - "traefik.http.routers.gitt-gaff.entrypoints=web,websecure"
       - "traefik.http.routers.gitt-gaff.tls=true"
