@@ -30,9 +30,6 @@ services:
       - "traefik.http.routers.gitt-gaff.tls=true"
       - "traefik.http.routers.gitt-gaff.tls.certresolver=myresolver"
       - "traefik.http.services.gitt-gaff.loadbalancer.server.port=3000"
-      - "traefik.http.routers.gitt-gaff.middlewares=crowdsec-gitt-gaff@docker"
-      - "traefik.http.middlewares.crowdsec-gitt-gaff.plugin.crowdsec-bouncer.enabled=true"
-      - "traefik.http.middlewares.crowdsec-gitt-gaff.plugin.crowdsec-bouncer.crowdseclapikey=${CROWDSEC_API_KEY}"
     networks:
       - archivebox_default
 
