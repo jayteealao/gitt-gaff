@@ -17,13 +17,14 @@ services:
     expose:
       - "3000"
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
+      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
     labels:
       - "traefik.enable=true"
+      - "traefik.docker.network=archivebox_default"
       - "traefik.http.routers.gitt-gaff.rule=Host(`gitt-gaff.archivist.lol`)"
       - "traefik.http.routers.gitt-gaff.entrypoints=web,websecure"
       - "traefik.http.routers.gitt-gaff.tls=true"
