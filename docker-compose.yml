@@ -4,14 +4,14 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_APP_URL: https://gitt-gaff.archivist.lol
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
     container_name: gitt-gaff
     restart: unless-stopped
     environment:
       - NODE_ENV=production
       - GITHUB_SERVER_PAT=${GITHUB_SERVER_PAT}
       - SESSION_SECRET=${SESSION_SECRET}
-      - NEXT_PUBLIC_APP_URL=https://gitt-gaff.archivist.lol
+      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
     expose:
@@ -24,12 +24,20 @@ services:
       start_period: 10s
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.gitt-gaff.rule=Host(`gitt-gaff.archivist.lol`)"
+      - "traefik.http.routers.gitt-gaff.rule=Host(`gitt-gaff.${DOMAIN_NAME}`)"
       - "traefik.http.routers.gitt-gaff.entrypoints=websecure"
-      - "traefik.http.routers.gitt-gaff.tls=true"
+      # - "traefik.http.routers.gitt-gaff.tls=true"
       - "traefik.http.routers.gitt-gaff.tls.certresolver=myresolver"
       - "traefik.http.services.gitt-gaff.loadbalancer.server.port=3000"
-      - "traefik.http.routers.gitt-gaff.priority=100"
+      # - "traefik.http.routers.gitt-gaff.priority=100"
+      - "traefik.docker.network=archivebox_default"
+      #Define midleware
+      - "traefik.http.routers.gitt-gaff.middlewares=crowdsec-gitt-gaff@docker"
+      ## Middleware configuration
+      - "traefik.http.middlewares.crowdsec-gitt-gaff.plugin.crowdsec-bouncer.enabled=true"
+      - "traefik.http.middlewares.crowdsec-gitt-gaff.plugin.crowdsec-bouncer.crowdseclapikey=${CROWDSEC_API_KEY}"
+
+
     networks:
       - archivebox_default
 
